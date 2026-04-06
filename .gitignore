@@ -38,6 +38,7 @@ pip-delete-this-directory.txt
 .coverage.*
 htmlcov/
 coverage.xml
+junit.xml
 *.cover
 *.py,cover
 
