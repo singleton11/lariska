@@ -15,7 +15,13 @@ from lariska.config import Config, TrelloConfig, load_config
 from lariska.hooks.Hook import Hook
 from lariska.hooks.card_assigned import CardAssignedHook
 from lariska.trello import TrelloAPIError, TrelloClient
-from lariska.workflow.db import create_task, get_task_by_card_id, init_db
+from lariska.workflow.db import (
+    create_task,
+    get_cached_list_id,
+    get_task_by_card_id,
+    init_db,
+    set_cached_list_id,
+)
 from lariska.workflow.runner import run_iteration
 
 
@@ -117,8 +123,49 @@ class TestDb:
 
 
 # ---------------------------------------------------------------------------
-# TrelloClient extensions
+# List ID cache tests
 # ---------------------------------------------------------------------------
+
+class TestListIdCache:
+    def test_init_creates_list_id_cache_table(self) -> None:
+        conn = _in_memory_db()
+        tables = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        assert "list_id_cache" in tables
+        conn.close()
+
+    def test_get_cached_list_id_returns_none_when_empty(self) -> None:
+        conn = _in_memory_db()
+        result = get_cached_list_id(conn, "board1", "somehash")
+        assert result is None
+        conn.close()
+
+    def test_set_and_get_cached_list_id(self) -> None:
+        conn = _in_memory_db()
+        set_cached_list_id(conn, "board1", "hash-abc", "list-42")
+        result = get_cached_list_id(conn, "board1", "hash-abc")
+        assert result == "list-42"
+        conn.close()
+
+    def test_get_cached_list_id_wrong_hash_returns_none(self) -> None:
+        conn = _in_memory_db()
+        set_cached_list_id(conn, "board1", "hash-abc", "list-42")
+        result = get_cached_list_id(conn, "board1", "different-hash")
+        assert result is None
+        conn.close()
+
+    def test_set_cached_list_id_overwrites_on_conflict(self) -> None:
+        conn = _in_memory_db()
+        set_cached_list_id(conn, "board1", "hash-old", "list-old")
+        set_cached_list_id(conn, "board1", "hash-new", "list-new")
+        assert get_cached_list_id(conn, "board1", "hash-old") is None
+        assert get_cached_list_id(conn, "board1", "hash-new") == "list-new"
+        conn.close()
+
 
 class TestTrelloClientExtensions:
     def test_get_card_returns_dict(self) -> None:
@@ -251,7 +298,7 @@ class TestCardAssignedHook:
         assert get_task_by_card_id(conn, "card-y") is None
         conn.close()
 
-    def test_handle_skips_when_list_name_not_found_on_board(self) -> None:
+    def test_handle_raises_when_list_name_not_found_on_board(self) -> None:
         notification: dict[str, Any] = {
             "type": "addedToCard",
             "data": {"card": {"id": "card-z"}},
@@ -268,12 +315,11 @@ class TestCardAssignedHook:
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
         hook = CardAssignedHook(self._config(list_name="Inbox"))
-        try:
-            hook.handle(notification, client, conn)
-        finally:
-            client.close()
-
-        assert get_task_by_card_id(conn, "card-z") is None
+        with pytest.raises(ValueError, match="Inbox"):
+            try:
+                hook.handle(notification, client, conn)
+            finally:
+                client.close()
         conn.close()
 
     def test_handle_missing_card_id_skips(self) -> None:
@@ -285,10 +331,104 @@ class TestCardAssignedHook:
         client.get_card.assert_not_called()
         conn.close()
 
+    def test_handle_populates_cache_on_first_call(self) -> None:
+        notification: dict[str, Any] = {
+            "type": "addedToCard",
+            "data": {"card": {"id": "card-c1"}},
+        }
+        api_call_count = {"boards": 0}
 
-# ---------------------------------------------------------------------------
-# Workflow tests
-# ---------------------------------------------------------------------------
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = str(request.url.path)
+            if "/cards/card-c1" in path:
+                return httpx.Response(200, json={"id": "card-c1", "idBoard": "board1", "idList": "list-in"})
+            if "/boards/board1/lists" in path:
+                api_call_count["boards"] += 1
+                return httpx.Response(200, json=[{"id": "list-in", "name": "Inbox"}])
+            return httpx.Response(404, text="not found")
+
+        client = _mocked_client(httpx.MockTransport(handler))
+        conn = _in_memory_db()
+        hook = CardAssignedHook(self._config(list_name="Inbox"))
+        try:
+            hook.handle(notification, client, conn)
+        finally:
+            client.close()
+
+        assert api_call_count["boards"] == 1
+        import hashlib
+        list_name_hash = hashlib.sha256(b"Inbox").hexdigest()
+        assert get_cached_list_id(conn, "board1", list_name_hash) == "list-in"
+        conn.close()
+
+    def test_handle_uses_cache_on_second_call(self) -> None:
+        notification: dict[str, Any] = {
+            "type": "addedToCard",
+            "data": {"card": {"id": "card-c2"}},
+        }
+        api_call_count = {"boards": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = str(request.url.path)
+            if "/cards/card-c2" in path:
+                return httpx.Response(200, json={"id": "card-c2", "idBoard": "board1", "idList": "list-in"})
+            if "/boards/board1/lists" in path:
+                api_call_count["boards"] += 1
+                return httpx.Response(200, json=[{"id": "list-in", "name": "Inbox"}])
+            return httpx.Response(404, text="not found")
+
+        client = _mocked_client(httpx.MockTransport(handler))
+        conn = _in_memory_db()
+        hook = CardAssignedHook(self._config(list_name="Inbox"))
+        try:
+            hook.handle(notification, client, conn)
+            # second handle call — board lists must NOT be fetched again
+            hook.handle(notification, client, conn)
+        finally:
+            client.close()
+
+        assert api_call_count["boards"] == 1
+        conn.close()
+
+    def test_handle_invalidates_cache_when_list_name_changes(self) -> None:
+        notification: dict[str, Any] = {
+            "type": "addedToCard",
+            "data": {"card": {"id": "card-c3"}},
+        }
+        api_call_count = {"boards": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = str(request.url.path)
+            if "/cards/card-c3" in path:
+                return httpx.Response(200, json={"id": "card-c3", "idBoard": "board1", "idList": "list-in"})
+            if "/boards/board1/lists" in path:
+                api_call_count["boards"] += 1
+                return httpx.Response(200, json=[
+                    {"id": "list-in", "name": "Inbox"},
+                    {"id": "list-todo", "name": "Todo"},
+                ])
+            return httpx.Response(404, text="not found")
+
+        conn = _in_memory_db()
+        # First hook with "Inbox"
+        client1 = _mocked_client(httpx.MockTransport(handler))
+        hook1 = CardAssignedHook(self._config(list_name="Inbox"))
+        try:
+            hook1.handle(notification, client1, conn)
+        finally:
+            client1.close()
+        assert api_call_count["boards"] == 1
+
+        # Second hook with different list name — cache should be bypassed
+        client2 = _mocked_client(httpx.MockTransport(handler))
+        hook2 = CardAssignedHook(self._config(list_name="Todo"))
+        try:
+            hook2.handle(notification, client2, conn)
+        finally:
+            client2.close()
+        assert api_call_count["boards"] == 2
+        conn.close()
+
 
 class TestRunIteration:
     def _make_handler(
