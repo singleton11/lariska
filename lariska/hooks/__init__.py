@@ -1,3 +1,3 @@
-from lariska.hooks.base import Hook
+from lariska.hooks.Hook import Hook
 
 __all__ = ["Hook"]

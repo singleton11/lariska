@@ -12,7 +12,7 @@ import yaml
 import lariska.config as _lariska_config_module
 
 from lariska.config import Config, TrelloConfig, load_config
-from lariska.hooks.base import Hook
+from lariska.hooks.Hook import Hook
 from lariska.hooks.card_assigned import CardAssignedHook
 from lariska.trello import TrelloAPIError, TrelloClient
 from lariska.workflow.db import create_task, get_task_by_card_id, init_db

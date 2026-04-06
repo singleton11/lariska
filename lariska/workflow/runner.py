@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any
 
 from lariska.config import Config, load_config
-from lariska.hooks.base import Hook
+from lariska.hooks.Hook import Hook
 from lariska.hooks.card_assigned import CardAssignedHook
 from lariska.trello.client import TrelloAPIError, TrelloClient
 from lariska.trello.notifications import fetch_member_notifications
