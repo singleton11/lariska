@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS list_id_cache (
+    board_id        TEXT    NOT NULL PRIMARY KEY,
+    list_name_hash  TEXT    NOT NULL,
+    list_id         TEXT    NOT NULL
+);
 """
 
 
@@ -57,3 +62,37 @@ def get_task_by_card_id(conn: sqlite3.Connection, card_id: str) -> sqlite3.Row |
     return conn.execute(
         "SELECT * FROM tasks WHERE card_id = ?", (card_id,)
     ).fetchone()
+
+
+def get_cached_list_id(
+    conn: sqlite3.Connection, board_id: str, list_name_hash: str
+) -> str | None:
+    """Return the cached list ID for *board_id* if *list_name_hash* matches.
+
+    Returns ``None`` when there is no cached entry or when the stored hash does
+    not match *list_name_hash* (i.e. the configured list name has changed).
+    """
+    row = conn.execute(
+        "SELECT list_id FROM list_id_cache WHERE board_id = ? AND list_name_hash = ?",
+        (board_id, list_name_hash),
+    ).fetchone()
+    return row["list_id"] if row is not None else None
+
+
+def set_cached_list_id(
+    conn: sqlite3.Connection, board_id: str, list_name_hash: str, list_id: str
+) -> None:
+    """Upsert the list ID cache entry for *board_id*.
+
+    If an entry for *board_id* already exists it is overwritten with the new
+    *list_name_hash* and *list_id* values, which effectively invalidates any
+    previously cached value for a different list name.
+    """
+    conn.execute(
+        "INSERT INTO list_id_cache (board_id, list_name_hash, list_id) VALUES (?, ?, ?)"
+        " ON CONFLICT(board_id) DO UPDATE SET"
+        "   list_name_hash = excluded.list_name_hash,"
+        "   list_id = excluded.list_id",
+        (board_id, list_name_hash, list_id),
+    )
+    conn.commit()

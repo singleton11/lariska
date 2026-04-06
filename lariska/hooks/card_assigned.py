@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import sqlite3
 from typing import Any
 
 from lariska.config import Config
 from lariska.trello.client import TrelloClient
-from lariska.workflow.db import create_task
+from lariska.workflow.db import create_task, get_cached_list_id, set_cached_list_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,27 +56,36 @@ class CardAssignedHook:
             logger.warning("Card %s has no idBoard, skipping", card_id)
             return
 
-        board_lists = client.get_board_lists(board_id)
-        target_list = next(
-            (lst for lst in board_lists if lst.get("name") == self._config.trello.list_name),
-            None,
-        )
+        list_name_hash = hashlib.sha256(
+            self._config.trello.list_name.encode()
+        ).hexdigest()
 
-        if target_list is None:
-            logger.debug(
-                "List named %r not found on board %s — skipping",
-                self._config.trello.list_name,
-                board_id,
+        target_list_id = get_cached_list_id(conn, board_id, list_name_hash)
+        if target_list_id is None:
+            board_lists = client.get_board_lists(board_id)
+            target_list = next(
+                (lst for lst in board_lists if lst.get("name") == self._config.trello.list_name),
+                None,
             )
-            return
 
-        if card_list_id != target_list["id"]:
+            if target_list is None:
+                logger.debug(
+                    "List named %r not found on board %s — skipping",
+                    self._config.trello.list_name,
+                    board_id,
+                )
+                return
+
+            target_list_id = target_list["id"]
+            set_cached_list_id(conn, board_id, list_name_hash, target_list_id)
+
+        if card_list_id != target_list_id:
             logger.debug(
                 "Card %s is in list %s, not %r (%s) — skipping",
                 card_id,
                 card_list_id,
                 self._config.trello.list_name,
-                target_list["id"],
+                target_list_id,
             )
             return
 
