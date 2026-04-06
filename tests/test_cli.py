@@ -10,6 +10,13 @@ from click.testing import CliRunner
 from lariska.agents import create_agent
 from lariska.cli import cli
 from lariska.config import Config, TrelloConfig, load_config, save_config
+from lariska.providers import (
+    ProvidersConfig,
+    ProviderConfig,
+    add_provider,
+    load_providers,
+    save_providers,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +217,154 @@ class TestCliGroup:
         assert "--trello-api-key" in result.output
         assert "--trello-token" in result.output
         assert "--trello-list-name" in result.output
+
+    def test_help_flag_shows_add_provider(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "add-provider" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Providers: save_providers / load_providers round-trip
+# ---------------------------------------------------------------------------
+
+class TestSaveProviders:
+    def test_save_and_load_round_trip(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        config = ProvidersConfig(
+            providers=[
+                ProviderConfig(type="OpenAI", endpoint="https://api.openai.com", api_key="sk-123"),
+            ]
+        )
+        save_providers(config, prov_file)
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+        assert loaded.providers[0].type == "OpenAI"
+        assert loaded.providers[0].endpoint == "https://api.openai.com"
+        assert loaded.providers[0].api_key == "sk-123"
+
+    def test_load_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        config = load_providers(prov_file)
+        assert config.providers == []
+
+    def test_save_creates_parent_directories(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "deep" / "nested" / "providers.yaml"
+        save_providers(ProvidersConfig(), prov_file)
+        assert prov_file.exists()
+
+    def test_multiple_providers(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        save_providers(
+            ProvidersConfig(
+                providers=[
+                    ProviderConfig(type="OpenAI", endpoint="https://api.openai.com", api_key="k1"),
+                    ProviderConfig(type="Anthropic", endpoint="https://api.anthropic.com", api_key="k2"),
+                ]
+            ),
+            prov_file,
+        )
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 2
+        assert loaded.providers[1].type == "Anthropic"
+
+
+class TestAddProvider:
+    def test_add_provider_appends_to_existing(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        save_providers(
+            ProvidersConfig(providers=[ProviderConfig(type="OpenAI", endpoint="https://ep1", api_key="k1")]),
+            prov_file,
+        )
+        add_provider("Anthropic", "https://ep2", "k2", path=prov_file)
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 2
+        assert loaded.providers[1].type == "Anthropic"
+
+    def test_add_provider_to_empty_file(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        provider = add_provider("OpenAI", "https://api.openai.com", "sk-abc", path=prov_file)
+        assert provider.type == "OpenAI"
+        assert provider.endpoint == "https://api.openai.com"
+        assert provider.api_key == "sk-abc"
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+
+    def test_incomplete_provider_entries_are_skipped(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        import yaml as _yaml
+        prov_file.write_text(_yaml.dump({
+            "providers": [
+                {"type": "OpenAI", "endpoint": "https://ep", "api_key": "k1"},
+                {"type": "Incomplete"},  # missing endpoint and api_key
+                {"type": "", "endpoint": "https://ep2", "api_key": "k2"},  # empty type
+            ]
+        }))
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+        assert loaded.providers[0].type == "OpenAI"
+
+
+# ---------------------------------------------------------------------------
+# CLI: add-provider subcommand
+# ---------------------------------------------------------------------------
+
+class TestAddProviderCommand:
+    def test_non_interactive_add_provider(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--providers", str(prov_file),
+                "add-provider",
+                "--type", "OpenAI",
+                "--endpoint", "https://api.openai.com",
+                "--api-key", "sk-test",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "OpenAI" in result.output
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+        assert loaded.providers[0].type == "OpenAI"
+        assert loaded.providers[0].endpoint == "https://api.openai.com"
+        assert loaded.providers[0].api_key == "sk-test"
+
+    def test_interactive_add_provider(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--providers", str(prov_file), "add-provider"],
+            input="Anthropic\nhttps://api.anthropic.com\nsk-ant\n",
+        )
+        assert result.exit_code == 0
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+        assert loaded.providers[0].type == "Anthropic"
+
+    def test_add_multiple_providers(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        runner = CliRunner()
+        runner.invoke(
+            cli,
+            ["--providers", str(prov_file), "add-provider",
+             "--type", "OpenAI", "--endpoint", "https://ep1", "--api-key", "k1"],
+        )
+        runner.invoke(
+            cli,
+            ["--providers", str(prov_file), "add-provider",
+             "--type", "Anthropic", "--endpoint", "https://ep2", "--api-key", "k2"],
+        )
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 2
+
+    def test_add_provider_help(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["add-provider", "--help"])
+        assert result.exit_code == 0
+        assert "--type" in result.output
+        assert "--endpoint" in result.output
+        assert "--api-key" in result.output

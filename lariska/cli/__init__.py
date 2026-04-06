@@ -5,6 +5,7 @@ import logging
 
 import click
 
+from lariska.cli.add_provider import add_provider
 from lariska.cli.create_agent import create_agent
 from lariska.cli.init_cmd import init
 from lariska.cli.run import run
@@ -17,11 +18,18 @@ from lariska.cli.run import run
     type=click.Path(),
     help="Path to configuration file (default: ~/.lariska/config/main.yaml)",
 )
+@click.option(
+    "--providers",
+    default=None,
+    type=click.Path(),
+    help="Path to providers file (default: ~/.lariska/config/providers.yaml)",
+)
 @click.pass_context
-def cli(ctx: click.Context, config: str | None) -> None:
+def cli(ctx: click.Context, config: str | None, providers: str | None) -> None:
     """Lariska — agent orchestrator."""
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
+    ctx.obj["providers"] = providers
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -29,6 +37,7 @@ def cli(ctx: click.Context, config: str | None) -> None:
 cli.add_command(init)
 cli.add_command(create_agent)
 cli.add_command(run)
+cli.add_command(add_provider)
 
 
 def main(argv: list[str] | None = None) -> None:
