@@ -40,6 +40,7 @@ def load_providers(path: str | Path | None = None) -> ProvidersConfig:
     """Load providers from *path* (defaults to ``~/.lariska/config/providers.yaml``).
 
     If the file does not exist an empty :class:`ProvidersConfig` is returned.
+    Entries missing required fields (type, endpoint, api_key) are skipped.
     """
     providers_path = Path(path) if path is not None else _PROVIDERS_FILE
     if not providers_path.exists():
@@ -48,14 +49,14 @@ def load_providers(path: str | Path | None = None) -> ProvidersConfig:
     with providers_path.open() as fh:
         raw: dict[str, Any] = yaml.safe_load(fh) or {}
 
-    providers = [
-        ProviderConfig(
-            type=p.get("type", ""),
-            endpoint=p.get("endpoint", ""),
-            api_key=p.get("api_key", ""),
-        )
-        for p in raw.get("providers", [])
-    ]
+    providers = []
+    for p in raw.get("providers", []):
+        provider_type = p.get("type", "")
+        endpoint = p.get("endpoint", "")
+        api_key = p.get("api_key", "")
+        if not provider_type or not endpoint or not api_key:
+            continue
+        providers.append(ProviderConfig(type=provider_type, endpoint=endpoint, api_key=api_key))
     return ProvidersConfig(providers=providers)
 
 

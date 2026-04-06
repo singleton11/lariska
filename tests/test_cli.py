@@ -286,8 +286,24 @@ class TestAddProvider:
         prov_file = tmp_path / "providers.yaml"
         provider = add_provider("OpenAI", "https://api.openai.com", "sk-abc", path=prov_file)
         assert provider.type == "OpenAI"
+        assert provider.endpoint == "https://api.openai.com"
+        assert provider.api_key == "sk-abc"
         loaded = load_providers(prov_file)
         assert len(loaded.providers) == 1
+
+    def test_incomplete_provider_entries_are_skipped(self, tmp_path: Path) -> None:
+        prov_file = tmp_path / "providers.yaml"
+        import yaml as _yaml
+        prov_file.write_text(_yaml.dump({
+            "providers": [
+                {"type": "OpenAI", "endpoint": "https://ep", "api_key": "k1"},
+                {"type": "Incomplete"},  # missing endpoint and api_key
+                {"type": "", "endpoint": "https://ep2", "api_key": "k2"},  # empty type
+            ]
+        }))
+        loaded = load_providers(prov_file)
+        assert len(loaded.providers) == 1
+        assert loaded.providers[0].type == "OpenAI"
 
 
 # ---------------------------------------------------------------------------
