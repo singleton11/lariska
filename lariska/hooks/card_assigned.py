@@ -53,6 +53,7 @@ class CardAssignedHook:
         card = client.get_card(card_id, fields="idBoard,idList,name")
         board_id = card.get("idBoard", "")
         card_list_id = card.get("idList", "")
+        card_title = card.get("name", "")
 
         if not board_id:
             logger.warning("Card %s has no idBoard, skipping", card_id)
@@ -88,7 +89,7 @@ class CardAssignedHook:
             )
             return
 
-        task_id = create_task(conn, card_id, state="ready")
+        task_id = create_task(conn, card_id, title=card_title, state="ready")
         logger.info(
             "Task %d created/found for card %s (state=ready)", task_id, card_id
         )
