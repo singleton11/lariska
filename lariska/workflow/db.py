@@ -22,10 +22,6 @@ CREATE TABLE IF NOT EXISTS list_id_cache (
 );
 """
 
-_MIGRATIONS = [
-    "ALTER TABLE tasks ADD COLUMN title TEXT NOT NULL DEFAULT ''",
-]
-
 
 def get_db_path() -> Path:
     return _DB_FILE
@@ -44,12 +40,6 @@ def init_db(db_path: str | Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.executescript(_SCHEMA)
     conn.commit()
-    for migration in _MIGRATIONS:
-        try:
-            conn.execute(migration)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # Column already exists
     return conn
 
 
