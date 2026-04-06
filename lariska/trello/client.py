@@ -109,3 +109,10 @@ class TrelloClient:
     def mark_notification_read(self, notification_id: str) -> None:
         """Mark a single notification as read (``unread=false``)."""
         self.request("PUT", f"notifications/{notification_id}", params={"unread": "false"})
+
+    def get_board_lists(self, board_id: str) -> list[dict[str, Any]]:
+        """Return all lists on a board as a list of dicts (each with ``id`` and ``name``)."""
+        data = self.get_json(f"boards/{board_id}/lists", params={"fields": "id,name"})
+        if not isinstance(data, list):
+            raise TrelloAPIError(200, body=repr(data), detail=data)
+        return data

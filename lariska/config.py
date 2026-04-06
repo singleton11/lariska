@@ -12,7 +12,7 @@ _CONFIG_FILE = _CONFIG_DIR / "main.yaml"
 _DEFAULT_CONFIG: dict[str, Any] = {
     "trello": {
         "member_id": "me",
-        "list_id": "",
+        "list_name": "",
     }
 }
 
@@ -20,7 +20,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 @dataclass
 class TrelloConfig:
     member_id: str = "me"
-    list_id: str = ""
+    list_name: str = ""
 
 
 @dataclass
@@ -51,6 +51,6 @@ def load_config(path: str | Path | None = None) -> Config:
     trello_raw = raw.get("trello", {})
     trello = TrelloConfig(
         member_id=trello_raw.get("member_id", "me"),
-        list_id=trello_raw.get("list_id", ""),
+        list_name=trello_raw.get("list_name", ""),
     )
     return Config(trello=trello)

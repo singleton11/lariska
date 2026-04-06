@@ -3,7 +3,7 @@ import logging
 from dotenv import load_dotenv
 
 from lariska.trello.client import TrelloClient
-from lariska.workflow import run_iteration
+from lariska.workflow.runner import run_iteration
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 

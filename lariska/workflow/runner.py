@@ -5,17 +5,23 @@ import sqlite3
 from typing import Any
 
 from lariska.config import Config, load_config
-from lariska.db import init_db
-from lariska.hooks import Hook
+from lariska.hooks.base import Hook
 from lariska.hooks.card_assigned import CardAssignedHook
 from lariska.trello.client import TrelloAPIError, TrelloClient
 from lariska.trello.notifications import fetch_member_notifications
+from lariska.workflow.db import init_db
 
 logger = logging.getLogger(__name__)
 
 
 def _build_hooks(config: Config) -> list[Hook]:
-    return [CardAssignedHook(config)]
+    try:
+        return [CardAssignedHook(config)]
+    except ValueError as exc:
+        raise ValueError(
+            f"Hook configuration error: {exc}. "
+            "Please update ~/.lariska/config/main.yaml."
+        ) from exc
 
 
 def run_iteration(

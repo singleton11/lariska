@@ -12,10 +12,11 @@ import yaml
 import lariska.config as _lariska_config_module
 
 from lariska.config import Config, TrelloConfig, load_config
-from lariska.db import create_task, get_task_by_card_id, init_db
+from lariska.hooks.base import Hook
 from lariska.hooks.card_assigned import CardAssignedHook
 from lariska.trello import TrelloAPIError, TrelloClient
-from lariska.workflow import run_iteration
+from lariska.workflow.db import create_task, get_task_by_card_id, init_db
+from lariska.workflow.runner import run_iteration
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +44,11 @@ class TestLoadConfig:
     def test_load_from_explicit_path(self, tmp_path: Path) -> None:
         cfg_file = tmp_path / "main.yaml"
         cfg_file.write_text(
-            yaml.dump({"trello": {"member_id": "abc123", "list_id": "list99"}})
+            yaml.dump({"trello": {"member_id": "abc123", "list_name": "Inbox"}})
         )
         config = load_config(cfg_file)
         assert config.trello.member_id == "abc123"
-        assert config.trello.list_id == "list99"
+        assert config.trello.list_name == "Inbox"
 
     def test_missing_file_creates_defaults(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg_file = tmp_path / "sub" / "main.yaml"
@@ -62,7 +63,7 @@ class TestLoadConfig:
         cfg_file.write_text(yaml.dump({"trello": {"member_id": "custom"}}))
         config = load_config(cfg_file)
         assert config.trello.member_id == "custom"
-        assert config.trello.list_id == ""
+        assert config.trello.list_name == ""
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ class TestDb:
 
     def test_create_task_default_state_is_ready(self) -> None:
         conn = _in_memory_db()
-        task_id = create_task(conn, "card-2")
+        create_task(conn, "card-2")  # return value unused; testing that row state is set correctly
         row = get_task_by_card_id(conn, "card-2")
         assert row is not None
         assert row["state"] == "ready"
@@ -123,7 +124,7 @@ class TestTrelloClientExtensions:
     def test_get_card_returns_dict(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             assert "/cards/card123" in str(request.url.path)
-            return httpx.Response(200, json={"id": "card123", "idList": "list1"})
+            return httpx.Response(200, json={"id": "card123", "idList": "list1", "idBoard": "board1"})
 
         client = _mocked_client(httpx.MockTransport(handler))
         try:
@@ -135,12 +136,12 @@ class TestTrelloClientExtensions:
 
     def test_get_card_fields_param(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            assert "fields=idList" in str(request.url)
-            return httpx.Response(200, json={"idList": "list1"})
+            assert "fields=" in str(request.url)
+            return httpx.Response(200, json={"idList": "list1", "idBoard": "board1"})
 
         client = _mocked_client(httpx.MockTransport(handler))
         try:
-            client.get_card("card1", fields="idList")
+            client.get_card("card1", fields="idBoard,idList,name")
         finally:
             client.close()
 
@@ -162,14 +163,33 @@ class TestTrelloClientExtensions:
         assert captured["method"] == "PUT"
         assert captured["path"].endswith("/notifications/notif1")
 
+    def test_get_board_lists_returns_list(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "/boards/board1/lists" in str(request.url.path)
+            return httpx.Response(
+                200, json=[{"id": "list-a", "name": "Inbox"}, {"id": "list-b", "name": "Done"}]
+            )
+
+        client = _mocked_client(httpx.MockTransport(handler))
+        try:
+            lists = client.get_board_lists("board1")
+        finally:
+            client.close()
+        assert len(lists) == 2
+        assert lists[0]["name"] == "Inbox"
+
 
 # ---------------------------------------------------------------------------
 # CardAssignedHook tests
 # ---------------------------------------------------------------------------
 
 class TestCardAssignedHook:
-    def _config(self, list_id: str = "list-target") -> Config:
-        return Config(trello=TrelloConfig(member_id="me", list_id=list_id))
+    def _config(self, list_name: str = "Inbox") -> Config:
+        return Config(trello=TrelloConfig(member_id="me", list_name=list_name))
+
+    def test_raises_when_list_name_not_configured(self) -> None:
+        with pytest.raises(ValueError, match="list_name"):
+            CardAssignedHook(self._config(list_name=""))
 
     def test_matches_added_to_card(self) -> None:
         hook = CardAssignedHook(self._config())
@@ -179,25 +199,23 @@ class TestCardAssignedHook:
         hook = CardAssignedHook(self._config())
         assert hook.matches({"type": "commentCard"}) is False
 
-    def test_handle_creates_task_in_correct_list(self) -> None:
+    def test_handle_creates_task_when_list_matches(self) -> None:
         notification: dict[str, Any] = {
             "type": "addedToCard",
             "data": {"card": {"id": "card-x"}},
         }
-        responses = [
-            httpx.Response(200, json={"id": "card-x", "idList": "list-target"}),
-        ]
-        idx = 0
 
         def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal idx
-            resp = responses[idx]
-            idx += 1
-            return resp
+            path = str(request.url.path)
+            if "/cards/card-x" in path:
+                return httpx.Response(200, json={"id": "card-x", "idBoard": "board1", "idList": "list-in"})
+            if "/boards/board1/lists" in path:
+                return httpx.Response(200, json=[{"id": "list-in", "name": "Inbox"}])
+            return httpx.Response(404, text="not found")
 
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
-        hook = CardAssignedHook(self._config(list_id="list-target"))
+        hook = CardAssignedHook(self._config(list_name="Inbox"))
         try:
             hook.handle(notification, client, conn)
         finally:
@@ -215,11 +233,16 @@ class TestCardAssignedHook:
         }
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"id": "card-y", "idList": "other-list"})
+            path = str(request.url.path)
+            if "/cards/card-y" in path:
+                return httpx.Response(200, json={"id": "card-y", "idBoard": "board1", "idList": "list-other"})
+            if "/boards/board1/lists" in path:
+                return httpx.Response(200, json=[{"id": "list-in", "name": "Inbox"}, {"id": "list-other", "name": "Backlog"}])
+            return httpx.Response(404, text="not found")
 
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
-        hook = CardAssignedHook(self._config(list_id="list-target"))
+        hook = CardAssignedHook(self._config(list_name="Inbox"))
         try:
             hook.handle(notification, client, conn)
         finally:
@@ -228,27 +251,29 @@ class TestCardAssignedHook:
         assert get_task_by_card_id(conn, "card-y") is None
         conn.close()
 
-    def test_handle_no_list_filter_creates_task(self) -> None:
-        """When list_id is empty, any card is accepted."""
+    def test_handle_skips_when_list_name_not_found_on_board(self) -> None:
         notification: dict[str, Any] = {
             "type": "addedToCard",
             "data": {"card": {"id": "card-z"}},
         }
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"id": "card-z", "idList": "any-list"})
+            path = str(request.url.path)
+            if "/cards/card-z" in path:
+                return httpx.Response(200, json={"id": "card-z", "idBoard": "board1", "idList": "list-in"})
+            if "/boards/board1/lists" in path:
+                return httpx.Response(200, json=[{"id": "list-in", "name": "Backlog"}])
+            return httpx.Response(404, text="not found")
 
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
-        hook = CardAssignedHook(self._config(list_id=""))
+        hook = CardAssignedHook(self._config(list_name="Inbox"))
         try:
             hook.handle(notification, client, conn)
         finally:
             client.close()
 
-        row = get_task_by_card_id(conn, "card-z")
-        assert row is not None
-        assert row["state"] == "ready"
+        assert get_task_by_card_id(conn, "card-z") is None
         conn.close()
 
     def test_handle_missing_card_id_skips(self) -> None:
@@ -270,9 +295,11 @@ class TestRunIteration:
         self,
         notifications: list[dict[str, Any]],
         card_responses: dict[str, dict[str, Any]] | None = None,
+        board_lists: list[dict[str, Any]] | None = None,
     ) -> httpx.MockTransport:
         """Build a mock transport for a full workflow run."""
         card_map = card_responses or {}
+        lists = board_lists or []
 
         def handler(request: httpx.Request) -> httpx.Response:
             path = str(request.url.path)
@@ -281,6 +308,8 @@ class TestRunIteration:
             for card_id, card_data in card_map.items():
                 if f"/cards/{card_id}" in path:
                     return httpx.Response(200, json=card_data)
+            if "/boards/" in path and "/lists" in path:
+                return httpx.Response(200, json=lists)
             if "/notifications/" in path and request.method == "PUT":
                 return httpx.Response(200, json={"unread": False})
             return httpx.Response(404, text="not found")
@@ -288,9 +317,9 @@ class TestRunIteration:
         return httpx.MockTransport(handler)
 
     def test_empty_notifications_no_tasks(self) -> None:
+        config = Config(trello=TrelloConfig(member_id="me", list_name="Inbox"))
         client = _mocked_client(self._make_handler([]))
         conn = _in_memory_db()
-        config = Config(trello=TrelloConfig(member_id="me", list_id=""))
         try:
             run_iteration(client, config=config, conn=conn)
         finally:
@@ -307,10 +336,11 @@ class TestRunIteration:
                 "data": {"card": {"id": "card-wf"}},
             }
         ]
-        card_responses = {"card-wf": {"id": "card-wf", "idList": "target-list"}}
-        client = _mocked_client(self._make_handler(notifications, card_responses))
+        card_responses = {"card-wf": {"id": "card-wf", "idBoard": "board1", "idList": "list-in"}}
+        board_lists = [{"id": "list-in", "name": "Inbox"}]
+        client = _mocked_client(self._make_handler(notifications, card_responses, board_lists))
         conn = _in_memory_db()
-        config = Config(trello=TrelloConfig(member_id="me", list_id="target-list"))
+        config = Config(trello=TrelloConfig(member_id="me", list_name="Inbox"))
         try:
             run_iteration(client, config=config, conn=conn)
         finally:
@@ -340,7 +370,7 @@ class TestRunIteration:
 
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
-        config = Config(trello=TrelloConfig(member_id="me", list_id=""))
+        config = Config(trello=TrelloConfig(member_id="me", list_name="Inbox"))
         try:
             run_iteration(client, config=config, conn=conn)
         finally:
