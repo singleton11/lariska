@@ -196,7 +196,7 @@ class TestCreateAgentCommand:
     ) -> None:
         import lariska.agents as _agents_module
         monkeypatch.setattr(_agents_module, "_AGENTS_DIR", tmp_path)
-        # Pass empty name directly instead of going interactive
+        # Pass empty name directly to bypass interactive prompt
         with pytest.raises(SystemExit) as exc_info:
             main(["create-agent", "--name", ""])
         assert exc_info.value.code == 1
