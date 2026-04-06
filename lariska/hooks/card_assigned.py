@@ -23,6 +23,8 @@ class CardAssignedHook:
 
     Raises:
         ValueError: On construction if ``config.trello.list_name`` is not set.
+        ValueError: From :meth:`handle` if the configured list name is not found
+            on the card's board.
     """
 
     def __init__(self, config: Config) -> None:
@@ -69,12 +71,9 @@ class CardAssignedHook:
             )
 
             if target_list is None:
-                logger.debug(
-                    "List named %r not found on board %s — skipping",
-                    self._config.trello.list_name,
-                    board_id,
+                raise ValueError(
+                    f"List named {self._config.trello.list_name!r} not found on board {board_id}"
                 )
-                return
 
             target_list_id = target_list["id"]
             set_cached_list_id(conn, board_id, list_name_hash, target_list_id)

@@ -298,7 +298,7 @@ class TestCardAssignedHook:
         assert get_task_by_card_id(conn, "card-y") is None
         conn.close()
 
-    def test_handle_skips_when_list_name_not_found_on_board(self) -> None:
+    def test_handle_raises_when_list_name_not_found_on_board(self) -> None:
         notification: dict[str, Any] = {
             "type": "addedToCard",
             "data": {"card": {"id": "card-z"}},
@@ -315,12 +315,11 @@ class TestCardAssignedHook:
         client = _mocked_client(httpx.MockTransport(handler))
         conn = _in_memory_db()
         hook = CardAssignedHook(self._config(list_name="Inbox"))
-        try:
-            hook.handle(notification, client, conn)
-        finally:
-            client.close()
-
-        assert get_task_by_card_id(conn, "card-z") is None
+        with pytest.raises(ValueError, match="Inbox"):
+            try:
+                hook.handle(notification, client, conn)
+            finally:
+                client.close()
         conn.close()
 
     def test_handle_missing_card_id_skips(self) -> None:
