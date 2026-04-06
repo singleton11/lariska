@@ -7,7 +7,12 @@ from lariska.providers import add_provider as _add_provider
 
 
 @click.command("add-provider")
-@click.option("--type", "provider_type", default=None, help="Provider type (e.g. OpenAI)")
+@click.option(
+    "--type",
+    "provider_type",
+    type=click.Choice(["OpenAI", "Anthropic"], case_sensitive=False),
+    help="Provider type (OpenAI or Anthropic)",
+)
 @click.option("--endpoint", default=None, help="Provider API endpoint URL")
 @click.option("--api-key", default=None, help="Provider API key")
 @click.pass_context
@@ -19,7 +24,10 @@ def add_provider(
 ) -> None:
     """Add a new LLM provider to providers.yaml."""
     if provider_type is None:
-        provider_type = click.prompt("Provider type (e.g. OpenAI)")
+        provider_type = click.prompt(
+            "Provider type", 
+            type=click.Choice(["OpenAI", "Anthropic"], case_sensitive=False)
+        )
     if endpoint is None:
         endpoint = click.prompt("Endpoint URL")
     if api_key is None:
