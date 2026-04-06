@@ -11,6 +11,8 @@ _CONFIG_FILE = _CONFIG_DIR / "main.yaml"
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "trello": {
+        "api_key": "",
+        "token": "",
         "member_id": "me",
         "list_name": "",
     }
@@ -19,6 +21,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 
 @dataclass
 class TrelloConfig:
+    api_key: str = ""
+    token: str = ""
     member_id: str = "me"
     list_name: str = ""
 
@@ -28,11 +32,31 @@ class Config:
     trello: TrelloConfig = field(default_factory=TrelloConfig)
 
 
+def _config_to_dict(config: Config) -> dict[str, Any]:
+    """Convert a :class:`Config` instance to a plain dict suitable for YAML."""
+    return {
+        "trello": {
+            "api_key": config.trello.api_key,
+            "token": config.trello.token,
+            "member_id": config.trello.member_id,
+            "list_name": config.trello.list_name,
+        }
+    }
+
+
 def _write_default_config(config_path: Path) -> None:
     """Write the default configuration to *config_path*, creating parent dirs."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("w") as fh:
         yaml.dump(_DEFAULT_CONFIG, fh, default_flow_style=False)
+
+
+def save_config(config: Config, path: str | Path | None = None) -> None:
+    """Persist *config* to *path* (defaults to ``~/.lariska/config/main.yaml``)."""
+    config_path = Path(path) if path is not None else _CONFIG_FILE
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with config_path.open("w") as fh:
+        yaml.dump(_config_to_dict(config), fh, default_flow_style=False)
 
 
 def load_config(path: str | Path | None = None) -> Config:
@@ -50,6 +74,8 @@ def load_config(path: str | Path | None = None) -> Config:
 
     trello_raw = raw.get("trello", {})
     trello = TrelloConfig(
+        api_key=trello_raw.get("api_key", ""),
+        token=trello_raw.get("token", ""),
         member_id=trello_raw.get("member_id", "me"),
         list_name=trello_raw.get("list_name", ""),
     )
