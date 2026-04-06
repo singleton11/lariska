@@ -10,6 +10,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     card_id     TEXT    NOT NULL UNIQUE,
+    title       TEXT    NOT NULL DEFAULT '',
     state       TEXT    NOT NULL DEFAULT 'ready',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -42,15 +43,15 @@ def init_db(db_path: str | Path | None = None) -> sqlite3.Connection:
     return conn
 
 
-def create_task(conn: sqlite3.Connection, card_id: str, state: str = "ready") -> int:
+def create_task(conn: sqlite3.Connection, card_id: str, title: str = "", state: str = "ready") -> int:
     """Insert a new task row and return its auto-generated *id*.
 
     If a task for *card_id* already exists the existing row is returned
     unchanged (idempotent).
     """
     conn.execute(
-        "INSERT OR IGNORE INTO tasks (card_id, state) VALUES (?, ?)",
-        (card_id, state),
+        "INSERT OR IGNORE INTO tasks (card_id, title, state) VALUES (?, ?, ?)",
+        (card_id, title, state),
     )
     conn.commit()
     row = conn.execute("SELECT id FROM tasks WHERE card_id = ?", (card_id,)).fetchone()

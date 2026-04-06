@@ -110,6 +110,23 @@ class TestDb:
         assert id1 == id2
         conn.close()
 
+    def test_create_task_stores_title(self) -> None:
+        conn = _in_memory_db()
+        create_task(conn, "card-t", title="My Task Title")
+        row = get_task_by_card_id(conn, "card-t")
+        assert row is not None
+        assert row["title"] == "My Task Title"
+        conn.close()
+
+    def test_create_task_default_title_is_empty(self) -> None:
+        conn = _in_memory_db()
+        create_task(conn, "card-notitle")
+        row = get_task_by_card_id(conn, "card-notitle")
+        assert row is not None
+        assert row["title"] == ""
+        conn.close()
+
+
     def test_get_task_by_card_id_not_found(self) -> None:
         conn = _in_memory_db()
         assert get_task_by_card_id(conn, "nonexistent") is None
@@ -255,7 +272,7 @@ class TestCardAssignedHook:
         def handler(request: httpx.Request) -> httpx.Response:
             path = str(request.url.path)
             if "/cards/card-x" in path:
-                return httpx.Response(200, json={"id": "card-x", "idBoard": "board1", "idList": "list-in"})
+                return httpx.Response(200, json={"id": "card-x", "idBoard": "board1", "idList": "list-in", "name": "Fix the bug"})
             if "/boards/board1/lists" in path:
                 return httpx.Response(200, json=[{"id": "list-in", "name": "Inbox"}])
             return httpx.Response(404, text="not found")
@@ -271,6 +288,7 @@ class TestCardAssignedHook:
         row = get_task_by_card_id(conn, "card-x")
         assert row is not None
         assert row["state"] == "ready"
+        assert row["title"] == "Fix the bug"
         conn.close()
 
     def test_handle_skips_wrong_list(self) -> None:
@@ -476,7 +494,7 @@ class TestRunIteration:
                 "data": {"card": {"id": "card-wf"}},
             }
         ]
-        card_responses = {"card-wf": {"id": "card-wf", "idBoard": "board1", "idList": "list-in"}}
+        card_responses = {"card-wf": {"id": "card-wf", "idBoard": "board1", "idList": "list-in", "name": "Workflow Task"}}
         board_lists = [{"id": "list-in", "name": "Inbox"}]
         client = _mocked_client(self._make_handler(notifications, card_responses, board_lists))
         conn = _in_memory_db()
@@ -488,6 +506,7 @@ class TestRunIteration:
         row = get_task_by_card_id(conn, "card-wf")
         assert row is not None
         assert row["state"] == "ready"
+        assert row["title"] == "Workflow Task"
         conn.close()
 
     def test_notification_marked_read_even_on_hook_error(self) -> None:
