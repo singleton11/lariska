@@ -1,17 +1,17 @@
+import logging
+
 from dotenv import load_dotenv
 
-from trello.client import TrelloClient
-from trello.notifications import fetch_member_notifications
+from lariska.trello.client import TrelloClient
+from lariska.workflow.runner import run_iteration
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 
 def main() -> None:
     load_dotenv()
     with TrelloClient() as client:
-        notes = fetch_member_notifications(client, read_filter="unread")
-        import pprint
-        pprint.pprint(notes)
-        print(notes)
-    
+        run_iteration(client)
 
 
 if __name__ == "__main__":

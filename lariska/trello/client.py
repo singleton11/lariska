@@ -88,3 +88,31 @@ class TrelloClient:
                 body=response.text,
                 detail=None,
             ) from exc
+
+    def get_card(self, card_id: str, fields: str | None = None) -> dict[str, Any]:
+        """Fetch a single card by ID.  Returns the card JSON as a dict.
+
+        Args:
+            card_id: The Trello card ID.
+            fields: Optional comma-separated list of card fields to include
+                (e.g. ``"idList,name"``).  When omitted, Trello returns a
+                default set of fields.
+        """
+        params: dict[str, str] = {}
+        if fields is not None:
+            params["fields"] = fields
+        data = self.get_json(f"cards/{card_id}", params=params)
+        if not isinstance(data, dict):
+            raise TrelloAPIError(200, body=repr(data), detail=data)
+        return data
+
+    def mark_notification_read(self, notification_id: str) -> None:
+        """Mark a single notification as read (``unread=false``)."""
+        self.request("PUT", f"notifications/{notification_id}", params={"unread": "false"})
+
+    def get_board_lists(self, board_id: str) -> list[dict[str, Any]]:
+        """Return all lists on a board as a list of dicts (each with ``id`` and ``name``)."""
+        data = self.get_json(f"boards/{board_id}/lists", params={"fields": "id,name"})
+        if not isinstance(data, list):
+            raise TrelloAPIError(200, body=repr(data), detail=data)
+        return data
